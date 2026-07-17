@@ -17,10 +17,10 @@ supabase_url: str = os.environ.get("SUPABASE_URL")
 supabase_key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# 【新增】設定台灣時區 (UTC+8)
+# 設定台灣時區 (UTC+8) - 負責處理「寫入」時當下的時間
 tw_tz = timezone(timedelta(hours=8))
 
-# 這是 Vercel 的 Webhook 路徑，對應你 vercel.json 的設定
+# 這是 Vercel 的 Webhook 路徑
 @app.route("/api/webhook", methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
@@ -36,25 +36,23 @@ def handle_message(event):
     user_id = event.source.user_id
     user_message = event.message.text.strip()
     
-    # 預設回覆，如果輸入不認識的字就會跳這個
+    # 預設回覆
     reply_text = "請輸入「血壓 120/80」、「吃藥」，或「上次用藥」、「查詢血壓」來查詢。"
 
     # 1. 處理血壓紀錄 (寫入資料庫)
     if user_message.startswith("血壓"):
         match = re.search(r'血壓\s*(\d+)[/-](\d+)', user_message)
         if match:
-            systolic = int(match.group(1))   # 收縮壓
-            diastolic = int(match.group(2))  # 舒張壓
+            systolic = int(match.group(1))   
+            diastolic = int(match.group(2))  
             
             try:
-                # 寫入血壓紀錄
                 supabase.table('blood_pressure_logs').insert({
                     "user_id": user_id,
                     "systolic": systolic,
                     "diastolic": diastolic
                 }).execute()
                 
-                # 【修改】使用台灣時區抓取現在時間
                 now_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M")
                 reply_text = f"✅ 已記錄血壓：{systolic}/{diastolic}\n🕒 時間：{now_str}"
             except Exception as e:
@@ -70,14 +68,13 @@ def handle_message(event):
                 "action": "took_pills"
             }).execute()
             
-            # 【修改】使用台灣時區抓取現在時間
             now_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M")
             reply_text = f"💊 已成功記錄用藥！\n🕒 時間：{now_str}"
         except Exception as e:
             reply_text = "⚠️ 用藥記錄失敗，請稍後再試。"
 
     # 3. 查詢上一次用藥時間 (從資料庫讀取)
-    elif user_message in ["上次用藥", "查詢用藥", "我吃藥了嗎"]:
+    elif user_message in ["上次用藥", "查詢用藥", "查詢用藥紀錄", "我吃藥了嗎"]:
         try:
             response = supabase.table('medication_logs') \
                 .select('created_at') \
@@ -88,12 +85,9 @@ def handle_message(event):
             
             if response.data and len(response.data) > 0:
                 last_time_str = response.data[0]['created_at']
-                # 【修改】解析 Supabase 的 UTC 時間，並轉換為台灣時間
-                if last_time_str.endswith('Z'):
-                    last_time_str = last_time_str[:-1] + '+00:00'
-                db_time = datetime.fromisoformat(last_time_str)
-                tw_time = db_time.astimezone(tw_tz)
-                formatted_time = tw_time.strftime("%Y-%m-%d %H:%M")
+                
+                # 【修正處】因為資料庫的時間已經是正確的，直接擷取前 16 個字元 (YYYY-MM-DD HH:MM)
+                formatted_time = last_time_str[:16].replace('T', ' ')
                 
                 reply_text = f"你上一次的用藥紀錄是：\n🕒 {formatted_time}"
             else:
@@ -118,12 +112,9 @@ def handle_message(event):
                 diastolic = latest_bp.get('diastolic')
                 
                 last_time_str = latest_bp.get('created_at')
-                # 【修改】解析 Supabase 的 UTC 時間，並轉換為台灣時間
-                if last_time_str.endswith('Z'):
-                    last_time_str = last_time_str[:-1] + '+00:00'
-                db_time = datetime.fromisoformat(last_time_str)
-                tw_time = db_time.astimezone(tw_tz)
-                formatted_time = tw_time.strftime("%Y-%m-%d %H:%M")
+                
+                # 【修正處】直接擷取前 16 個字元
+                formatted_time = last_time_str[:16].replace('T', ' ')
                 
                 reply_text = f"📊 你上次紀錄的血壓是：\n收縮壓 {systolic} / 舒張壓 {diastolic}\n🕒 紀錄時間：{formatted_time}"
             else:
