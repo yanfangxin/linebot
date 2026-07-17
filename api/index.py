@@ -34,7 +34,7 @@ def handle_message(event):
     user_message = event.message.text.strip()
     
     # 預設回覆，如果輸入不認識的字就會跳這個
-    reply_text = "請輸入「血壓 120/80」、「吃藥」，或「上次用藥」來查詢。"
+    reply_text = "請輸入「血壓 120/80」、「吃藥」，或「上次用藥」、「查詢血壓」來查詢。"
 
     # 1. 處理血壓紀錄 (寫入資料庫)
     if user_message.startswith("血壓"):
@@ -51,7 +51,8 @@ def handle_message(event):
                     "diastolic": diastolic
                 }).execute()
                 
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                # 這裡原本就沒有秒數，維持 %Y-%m-%d %H:%M
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
                 reply_text = f"✅ 已記錄血壓：{systolic}/{diastolic}\n🕒 時間：{now_str}"
             except Exception as e:
                 reply_text = "⚠️ 血壓記錄失敗，請檢查 Supabase 資料庫設定。"
@@ -66,7 +67,8 @@ def handle_message(event):
                 "action": "took_pills"
             }).execute()
             
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # 【修改處】把 :%S 拿掉，只顯示到分
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
             reply_text = f"💊 已成功記錄用藥！\n🕒 時間：{now_str}"
         except Exception as e:
             reply_text = "⚠️ 用藥記錄失敗，請稍後再試。"
@@ -83,11 +85,37 @@ def handle_message(event):
             
             if response.data and len(response.data) > 0:
                 last_time_str = response.data[0]['created_at']
-                # 把 Supabase 帶有時區的時間字串稍微清理一下，變好看一點
-                formatted_time = last_time_str.split('+')[0].replace('T', ' ')
+                # 【修改處】取前 16 個字元 (YYYY-MM-DDTHH:MM)，去掉秒數與微秒，並把 T 換成空白
+                formatted_time = last_time_str[:16].replace('T', ' ')
                 reply_text = f"你上一次的用藥紀錄是：\n🕒 {formatted_time}"
             else:
                 reply_text = "資料庫裡目前沒有你的用藥紀錄喔！"
+                
+        except Exception as e:
+            reply_text = "⚠️ 查詢失敗，請稍後再試。"
+
+    # 4. 【新增功能】查詢血壓
+    elif user_message in ["查詢血壓", "上次血壓", "我的血壓"]:
+        try:
+            response = supabase.table('blood_pressure_logs') \
+                .select('*') \
+                .eq('user_id', user_id) \
+                .order('created_at', desc=True) \
+                .limit(1) \
+                .execute()
+            
+            if response.data and len(response.data) > 0:
+                latest_bp = response.data[0]
+                systolic = latest_bp.get('systolic')
+                diastolic = latest_bp.get('diastolic')
+                
+                last_time_str = latest_bp.get('created_at')
+                # 取前 16 個字元 (YYYY-MM-DDTHH:MM)，去掉秒數與微秒，並把 T 換成空白
+                formatted_time = last_time_str[:16].replace('T', ' ')
+                
+                reply_text = f"📊 你上次紀錄的血壓是：\n收縮壓 {systolic} / 舒張壓 {diastolic}\n🕒 紀錄時間：{formatted_time}"
+            else:
+                reply_text = "資料庫裡目前沒有你的血壓紀錄喔！"
                 
         except Exception as e:
             reply_text = "⚠️ 查詢失敗，請稍後再試。"
