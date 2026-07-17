@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -16,6 +16,9 @@ handler = WebhookHandler(os.environ.get('LINE_CHANNEL_SECRET'))
 supabase_url: str = os.environ.get("SUPABASE_URL")
 supabase_key: str = os.environ.get("SUPABASE_KEY")
 supabase: Client = create_client(supabase_url, supabase_key)
+
+# 【新增】設定台灣時區 (UTC+8)
+tw_tz = timezone(timedelta(hours=8))
 
 # 這是 Vercel 的 Webhook 路徑，對應你 vercel.json 的設定
 @app.route("/api/webhook", methods=['POST'])
@@ -51,8 +54,8 @@ def handle_message(event):
                     "diastolic": diastolic
                 }).execute()
                 
-                # 這裡原本就沒有秒數，維持 %Y-%m-%d %H:%M
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                # 【修改】使用台灣時區抓取現在時間
+                now_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M")
                 reply_text = f"✅ 已記錄血壓：{systolic}/{diastolic}\n🕒 時間：{now_str}"
             except Exception as e:
                 reply_text = "⚠️ 血壓記錄失敗，請檢查 Supabase 資料庫設定。"
@@ -67,8 +70,8 @@ def handle_message(event):
                 "action": "took_pills"
             }).execute()
             
-            # 【修改處】把 :%S 拿掉，只顯示到分
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            # 【修改】使用台灣時區抓取現在時間
+            now_str = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M")
             reply_text = f"💊 已成功記錄用藥！\n🕒 時間：{now_str}"
         except Exception as e:
             reply_text = "⚠️ 用藥記錄失敗，請稍後再試。"
@@ -85,8 +88,13 @@ def handle_message(event):
             
             if response.data and len(response.data) > 0:
                 last_time_str = response.data[0]['created_at']
-                # 【修改處】取前 16 個字元 (YYYY-MM-DDTHH:MM)，去掉秒數與微秒，並把 T 換成空白
-                formatted_time = last_time_str[:16].replace('T', ' ')
+                # 【修改】解析 Supabase 的 UTC 時間，並轉換為台灣時間
+                if last_time_str.endswith('Z'):
+                    last_time_str = last_time_str[:-1] + '+00:00'
+                db_time = datetime.fromisoformat(last_time_str)
+                tw_time = db_time.astimezone(tw_tz)
+                formatted_time = tw_time.strftime("%Y-%m-%d %H:%M")
+                
                 reply_text = f"你上一次的用藥紀錄是：\n🕒 {formatted_time}"
             else:
                 reply_text = "資料庫裡目前沒有你的用藥紀錄喔！"
@@ -94,7 +102,7 @@ def handle_message(event):
         except Exception as e:
             reply_text = "⚠️ 查詢失敗，請稍後再試。"
 
-    # 4. 【新增功能】查詢血壓
+    # 4. 查詢血壓
     elif user_message in ["查詢血壓", "上次血壓", "我的血壓"]:
         try:
             response = supabase.table('blood_pressure_logs') \
@@ -110,8 +118,12 @@ def handle_message(event):
                 diastolic = latest_bp.get('diastolic')
                 
                 last_time_str = latest_bp.get('created_at')
-                # 取前 16 個字元 (YYYY-MM-DDTHH:MM)，去掉秒數與微秒，並把 T 換成空白
-                formatted_time = last_time_str[:16].replace('T', ' ')
+                # 【修改】解析 Supabase 的 UTC 時間，並轉換為台灣時間
+                if last_time_str.endswith('Z'):
+                    last_time_str = last_time_str[:-1] + '+00:00'
+                db_time = datetime.fromisoformat(last_time_str)
+                tw_time = db_time.astimezone(tw_tz)
+                formatted_time = tw_time.strftime("%Y-%m-%d %H:%M")
                 
                 reply_text = f"📊 你上次紀錄的血壓是：\n收縮壓 {systolic} / 舒張壓 {diastolic}\n🕒 紀錄時間：{formatted_time}"
             else:
